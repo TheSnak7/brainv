@@ -1,7 +1,9 @@
 use std::{env, fs, path::Path};
 
 mod compiler;
+mod vm;
 use crate::compiler::*;
+use crate::vm::*;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -15,5 +17,7 @@ fn main() {
     let compiler = Compiler::new(&program_text);
     let code = compiler.compile();
 
-    println!("Code:\n{:?}", code)
+    let mut vm = Vm::new(code);
+
+    vm.run();
 }
