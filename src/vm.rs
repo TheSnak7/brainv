@@ -1,5 +1,7 @@
 use std::{fmt, io::Read};
 
+use crate::io::IO;
+
 #[derive(Debug, Clone, Copy)]
 pub enum Op {
     #[allow(unused)]
@@ -38,15 +40,17 @@ pub struct Vm {
     pc: usize,
     // Tape Pointer
     tp: usize,
+    io: Box<dyn IO>,
 }
 
 impl Vm {
-    pub fn new(program: Vec<Op>) -> Self {
+    pub fn new(io: Box<dyn IO>, program: Vec<Op>) -> Self {
         Self {
             program,
             tape: vec![0; 1024],
             pc: 0,
             tp: 0,
+            io,
         }
     }
 
@@ -61,14 +65,15 @@ impl Vm {
                     if self.tp > 0 {
                         self.tp -= 1
                     } else {
-                        panic!("Vm exceeded available tape at instruction: {} at index: {}", instruction, self.pc);
+                        panic!(
+                            "Vm exceeded available tape at instruction: {} at index: {}",
+                            instruction, self.pc
+                        );
                     }
                 }
-                Op::Print => print!("{}", self.tape[self.tp] as char),
+                Op::Print => self.io.write_byte(self.tape[self.tp]),
                 Op::Read => {
-                    let mut input = [0u8; 1];
-                    std::io::stdin().read_exact(&mut input).unwrap();
-                    self.tape[self.tp] = input[0];
+                    self.tape[self.tp] = self.io.read_byte();
                 }
                 Op::JmpIfZ => {
                     let cell_val = self.tape[self.tp];
@@ -112,5 +117,9 @@ impl Vm {
                 break;
             }
         }
+    }
+
+    pub fn flush_io(&mut self) {
+        self.io.flush();
     }
 }
