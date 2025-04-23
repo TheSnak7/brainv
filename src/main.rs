@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 mod compiler;
 mod io;
-mod vm;
+pub mod vm;
 use clap::Parser;
 use clap::{ValueEnum, command};
 

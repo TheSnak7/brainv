@@ -1,6 +1,6 @@
 use std::{fmt, io::Read};
 
-use crate::io::IO;
+use crate::{compiler::Compiler, io::{MemoryIO, IO}};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Op {
@@ -32,7 +32,7 @@ impl fmt::Display for Op {
     }
 }
 
-pub struct Vm {
+pub struct Vm<'a> {
     program: Vec<Op>,
     // NO WRAP AROUND -> abort on move past end of tape
     tape: Vec<u8>,
@@ -40,11 +40,11 @@ pub struct Vm {
     pc: usize,
     // Tape Pointer
     tp: usize,
-    io: Box<dyn IO>,
+    io: Box<dyn IO<'a> + 'a>,
 }
 
-impl Vm {
-    pub fn new(io: Box<dyn IO>, program: Vec<Op>) -> Self {
+impl<'a> Vm<'a> {
+    pub fn new(io: Box<dyn IO<'a> + 'a>, program: Vec<Op>) -> Self {
         Self {
             program,
             tape: vec![0; 1024],
@@ -119,7 +119,22 @@ impl Vm {
         }
     }
 
+
     pub fn flush_io(&mut self) {
         self.io.flush();
     }
+}
+
+pub fn bench_run(program: &str, input: Vec<u8>) -> Vec<u8> {
+    let code = Compiler::new(program).compile();
+    let mut output_buffer = Vec::with_capacity(1024);
+    let input_buffer = input;
+    
+    {
+        let io = Box::new(MemoryIO::new(&mut output_buffer, input_buffer));
+        let mut vm = Vm::new(io, code);
+        vm.run();
+    } // vm and io are dropped here, releasing the borrow on output_buffer
+    
+    output_buffer
 }
