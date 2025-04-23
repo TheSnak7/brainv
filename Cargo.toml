@@ -5,3 +5,14 @@ edition = "2024"
 
 [dependencies]
 clap = { version = "4.5.35", features = ["derive"] }
+
+[dev-dependencies]
+criterion = "0.5.1"
+
+[[bench]]
+#name = "hanoi"
+#name = "serptri"
+#name = "mandelbrot"
+#name = "mandelbrot-tiny"
+name = "pi-digits"
+harness = false
