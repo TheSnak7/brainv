@@ -6,4 +6,9 @@ Brainv is a brainf*ck interpreter for me to explore some libraries and maybe som
 
 ## Benchmarks
 
-TODO
+| Version   | Primes(350) | Pi-Digits(150) |
+|-----------|-------------|
+| Simple    | 747.49 ms   | 304.30 ms
+
+
+

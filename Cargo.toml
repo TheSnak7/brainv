@@ -14,5 +14,6 @@ criterion = "0.5.1"
 #name = "serptri"
 #name = "mandelbrot"
 #name = "mandelbrot-tiny"
-name = "pi-digits"
+#name = "pi-digits"
+name = "primes"
 harness = false
