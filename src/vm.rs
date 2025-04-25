@@ -1,4 +1,4 @@
-use std::{fmt, io::Read};
+use std::fmt;
 
 use crate::{compiler::Compiler, io::{MemoryIO, IO}};
 
@@ -6,12 +6,14 @@ use crate::{compiler::Compiler, io::{MemoryIO, IO}};
 pub enum Op {
     #[allow(unused)]
     Nop,
-    Inc,
-    Dec,
-    MovR,
-    MovL,
-    JmpIfZ,
-    JmpIfNZ,
+    Inc(u8),
+    Dec(u8),
+    MovR(u8),
+    MovL(u8),
+    /// Jump to the matching right brace if the cell is zero
+    JmpIfZ(u16),
+    /// Jump to the matching left brace if the cell is not zero
+    JmpIfNZ(u16),
     Print,
     Read,
 }
@@ -20,12 +22,12 @@ impl fmt::Display for Op {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Op::Nop => write!(f, "Nop"),
-            Op::Inc => write!(f, "Inc"),
-            Op::Dec => write!(f, "Dec"),
-            Op::MovR => write!(f, "MovR"),
-            Op::MovL => write!(f, "MovL"),
-            Op::JmpIfZ => write!(f, "JmpIfZ"),
-            Op::JmpIfNZ => write!(f, "JmpIfNZ"),
+            Op::Inc(num) => write!(f, "Inc by {num}"),
+            Op::Dec(num) => write!(f, "Dec by {num}"),
+            Op::MovR(num) => write!(f, "MovR by {num}"),
+            Op::MovL(num) => write!(f, "MovL by {num}"),
+            Op::JmpIfZ(index) => write!(f, "JmpIfZ to {index}"),
+            Op::JmpIfNZ(index) => write!(f, "JmpIfNZ to {index}"),
             Op::Print => write!(f, "Print"),
             Op::Read => write!(f, "Read"),
         }
@@ -55,27 +57,34 @@ impl<'a> Vm<'a> {
     }
 
     pub fn run(&mut self) {
+        //println!("Running program: {:?}", self.program);
+
         loop {
             let instruction = self.program[self.pc];
             match instruction {
-                Op::Inc => self.tape[self.tp] = self.tape[self.tp].wrapping_add(1),
-                Op::Dec => self.tape[self.tp] = self.tape[self.tp].wrapping_sub(1),
-                Op::MovR => self.tp += 1,
-                Op::MovL => {
+                Op::Inc(num) => self.tape[self.tp] = self.tape[self.tp].wrapping_add(num),
+                Op::Dec(num) => self.tape[self.tp] = self.tape[self.tp].wrapping_sub(num),
+                Op::MovR(num) => {
+                    let shift = num as usize;
+                    self.tp += shift;
+                    // grow tape on the right as needed
+                    while self.tp >= self.tape.len() {
+                        self.tape.push(0);
+                    }
+                }
+                Op::MovL(num) => {
+                    let shift = num as usize;
                     if self.tp > 0 {
-                        self.tp -= 1
+                        self.tp -= shift;
                     } else {
-                        panic!(
-                            "Vm exceeded available tape at instruction: {} at index: {}",
-                            instruction, self.pc
-                        );
+                        panic!("Tape pointer underflow: attempted to move left {} from position {}", shift, self.tp);
                     }
                 }
                 Op::Print => self.io.write_byte(self.tape[self.tp]),
                 Op::Read => {
                     self.tape[self.tp] = self.io.read_byte();
                 }
-                Op::JmpIfZ => {
+                Op::JmpIfZ(_) => {
                     let cell_val = self.tape[self.tp];
                     if cell_val == 0 {
                         let mut depth = 1;
@@ -85,14 +94,14 @@ impl<'a> Vm<'a> {
                                 panic!("Unmatched [ at position: {}", self.pc);
                             }
                             match self.program[self.pc] {
-                                Op::JmpIfZ => depth += 1,
-                                Op::JmpIfNZ => depth -= 1,
+                                Op::JmpIfZ(_) => depth += 1,
+                                Op::JmpIfNZ(_) => depth -= 1,
                                 _ => {}
                             }
                         }
                     }
                 }
-                Op::JmpIfNZ => {
+                Op::JmpIfNZ(_) => {
                     let cell_val = self.tape[self.tp];
                     if cell_val != 0 {
                         let mut depth = 1;
@@ -102,8 +111,8 @@ impl<'a> Vm<'a> {
                             }
                             self.pc -= 1;
                             match self.program[self.pc] {
-                                Op::JmpIfZ => depth -= 1,
-                                Op::JmpIfNZ => depth += 1,
+                                Op::JmpIfZ(_) => depth -= 1,
+                                Op::JmpIfNZ(_) => depth += 1,
                                 _ => {}
                             }
                         }

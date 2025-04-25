@@ -101,7 +101,7 @@ impl<'a> IO<'a> for MemoryIO<'a> {
     }
 
     fn read_byte(&mut self) -> u8 {
-        // Read until a non-carriage-return (skip CR only)
+        // Read until a non-carriage-return or non-newline (skip CR and LF)
         while self.input_pos < self.input.len() {
             let b = self.input[self.input_pos];
             self.input_pos += 1;
