@@ -84,39 +84,14 @@ impl<'a> Vm<'a> {
                 Op::Read => {
                     self.tape[self.tp] = self.io.read_byte();
                 }
-                Op::JmpIfZ(_) => {
-                    let cell_val = self.tape[self.tp];
-                    if cell_val == 0 {
-                        let mut depth = 1;
-                        while depth > 0 {
-                            self.pc += 1;
-                            if self.pc >= self.program.len() {
-                                panic!("Unmatched [ at position: {}", self.pc);
-                            }
-                            match self.program[self.pc] {
-                                Op::JmpIfZ(_) => depth += 1,
-                                Op::JmpIfNZ(_) => depth -= 1,
-                                _ => {}
-                            }
-                        }
+                Op::JmpIfZ(jmp_index) => {
+                    if self.tape[self.tp] == 0 {
+                        self.pc = jmp_index as usize;
                     }
                 }
-                Op::JmpIfNZ(_) => {
-                    let cell_val = self.tape[self.tp];
-                    if cell_val != 0 {
-                        let mut depth = 1;
-                        while depth > 0 {
-                            if self.pc == 0 {
-                                panic!("Unmatched ] at position: {}", self.pc);
-                            }
-                            self.pc -= 1;
-                            match self.program[self.pc] {
-                                Op::JmpIfZ(_) => depth -= 1,
-                                Op::JmpIfNZ(_) => depth += 1,
-                                _ => {}
-                            }
-                        }
-                        self.pc -= 1;
+                Op::JmpIfNZ(jmp_index) => {
+                    if self.tape[self.tp] != 0 {
+                        self.pc = jmp_index as usize;
                     }
                 }
                 Op::Nop => (),

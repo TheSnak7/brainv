@@ -16,7 +16,7 @@ impl<'a> Compiler<'a> {
 
         let mut last_instruction = Op::Nop;
 
-        //let mut left_bracket_stack = vec![];
+        let mut left_bracket_stack = vec![];
 
         for i in 0..(self.program.len()) {
             let char = self.program.as_bytes().get(i).expect("Program index oob while compiling").clone() as char;
@@ -59,11 +59,15 @@ impl<'a> Compiler<'a> {
                 },
                 '[' => {
                     code.push(last_instruction);
+                    left_bracket_stack.push(code.len());
                     last_instruction = Op::JmpIfZ(0);
                 },
                 ']' => {
                     code.push(last_instruction);
-                    last_instruction = Op::JmpIfNZ(0);
+                    // backpatch the left bracket
+                    let left_bracket_index = left_bracket_stack.pop().expect("Unmatched ']'");
+                    last_instruction = Op::JmpIfNZ(left_bracket_index as u16);
+                    code[left_bracket_index] = Op::JmpIfZ(code.len() as u16);
                 },
                 '.' => {
                     code.push(last_instruction);
