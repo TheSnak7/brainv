@@ -1,14 +1,12 @@
 use std::{fs, path::Path};
 
-mod compiler;
-mod io;
-pub mod vm;
+use brainv::jit::JIT;
+use brainv::runtime::Runtime;
 use clap::Parser;
 use clap::{ValueEnum, command};
 
-use crate::compiler::*;
-use crate::vm::*;
-use crate::io::*;
+use brainv::compiler::*;
+use brainv::io::*;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -42,9 +40,19 @@ fn main() {
 
     let compiler = Compiler::new(&program_text);
     let code = compiler.compile();
+    let mut jit = JIT::new(code);
+    let compiled_code = jit.compile();
 
-    let mut vm = Vm::new(io, code);
+    if let Ok(code_ptr) = compiled_code {
+        let code_ptr = code_ptr as *const u8;
+        let mut runtime = Runtime::new(io, code_ptr);
+        runtime.run();
+        //let tape = runtime.tape();
+        //println!("Tape: {:?}", tape);
+    }
 
-    vm.run();
-    vm.flush_io();
+    
+
+    //vm.run();
+    //vm.flush_io();
 }
