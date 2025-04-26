@@ -1,34 +1,16 @@
 use crate::vm;
-use cranelift::jit::JITBuilder;
-use cranelift::jit::JITModule;
-use cranelift::prelude::*;
-use cranelift_module::DataDescription;
-use cranelift_module::Module;
-use cranelift_module::Linkage;
+
 
 pub struct JIT {
     code: Vec<vm::Op>,
-    builder_context: FunctionBuilderContext,
-    ctx: codegen::Context,
-    data_description: DataDescription,
-    module: JITModule,
 }
 
 impl JIT {
-    pub fn new(code: Vec<vm::Op>) -> Self {        
-        let builder = JITBuilder::new(cranelift_module::default_libcall_names()).unwrap_or_else(|msg| {
-            panic!("Failed to create JITBuilder: {}", msg);
-        });
+    pub fn new(code: Vec<vm::Op>) -> Self { 
         
-        
-        let module = JITModule::new(builder);
 
         Self { 
             code: code,
-            builder_context: FunctionBuilderContext::new(),
-            ctx: module.make_context(),
-            data_description: DataDescription::new(),
-            module: module,
         }
     }
 }
@@ -43,152 +25,124 @@ impl JIT {
     //    -> u8
     // For now the tape is not growable, so we can just pass a pointer to the tape
 
-    pub fn compile(&mut self) -> Result<*const u8, String> {
-        // Translate the IR into self.ctx.func
-        self.translate()?;
-        // Declare the JIT function using the signature we built
-        let func_id = self.module
-            .declare_function("bf_jit", Linkage::Export, &self.ctx.func.signature)
-            .map_err(|e| e.to_string())?;
-        // Define and finalize
-        self.module.define_function(func_id, &mut self.ctx).map_err(|e| e.to_string())?;
-        self.module.clear_context(&mut self.ctx);
-        self.module.finalize_definitions().unwrap();
-        // Return the generated code pointer
-        Ok(self.module.get_finalized_function(func_id))
-    }
-    
+    // ARM64 only, no support for x86
+    pub fn compile(&self) -> Result<Vec<u8>, String> {
+        // Ensure we're on ARM64
+        assert_eq!(std::env::consts::ARCH, "aarch64");
 
-    fn translate(&mut self) -> Result<(), String> {
-        // Build function signature for BF JIT
-        let ptr_ty = self.module.target_config().pointer_type();
-        // params: tape ptr, runtime ptr, write_fn ptr, read_fn ptr
-        self.ctx.func.signature.params.push(AbiParam::new(ptr_ty)); // tape ptr
-        self.ctx.func.signature.params.push(AbiParam::new(ptr_ty)); // runtime ptr
-        self.ctx.func.signature.params.push(AbiParam::new(ptr_ty)); // write fn ptr
-        self.ctx.func.signature.params.push(AbiParam::new(ptr_ty)); // read fn ptr
-        self.ctx.func.signature.returns.push(AbiParam::new(types::I8));
+        // Calling convention:
+        //   x0: tape_ptr, x1: rt_ptr, x2: write_fn, x3: read_fn
+        // We'll save them in callee-saved registers:
+        //   x19 = tape_ptr, x20 = rt_ptr, x21 = write_fn, x22 = read_fn
+        let mut code: Vec<u8> = Vec::new();
+        // PROLOGUE: push frame pointer & link register
+        code.extend(&[0xFD, 0x7B, 0xBF, 0xA9]); // stp x29, x30, [sp, #-16]!
+        code.extend(&[0xFD, 0x03, 0x00, 0x91]); // mov x29, sp
+        // Save arguments into callee-saved regs via ADD #0 (mov xN, xM)
+        code.extend(&[0x13, 0x00, 0x00, 0x91]); // add x19, x0, #0
+        code.extend(&[0x34, 0x00, 0x00, 0x91]); // add x20, x1, #0
+        code.extend(&[0x55, 0x00, 0x00, 0x91]); // add x21, x2, #0
+        code.extend(&[0x76, 0x00, 0x00, 0x91]); // add x22, x3, #0
 
-        let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
-
-        // Create a block for each instruction plus an exit block
-        println!("Translate JIT: code.len()={}", self.code.len());
-        let num_ops = self.code.len();
-        let mut blocks = Vec::with_capacity(num_ops + 1);
-        println!("Translate JIT: creating {} blocks (op count + exit)", num_ops + 1);
-        for _ in 0..(num_ops + 1) {
-            blocks.push(builder.create_block());
+        // First pass: compute byte offsets for each instruction label
+        let mut label_offsets = vec![0usize; self.code.len()];
+        {
+            let mut offset = code.len();
+            for (i, op) in self.code.iter().enumerate() {
+                label_offsets[i] = offset;
+                offset += match op {
+                    vm::Op::Inc(_) | vm::Op::Dec(_) => 12,
+                    vm::Op::MovR(_) | vm::Op::MovL(_) => 4,
+                    vm::Op::Print | vm::Op::Read => 16,
+                    vm::Op::JmpIfZ(_) | vm::Op::JmpIfNZ(_) => 8,
+                    vm::Op::Nop => 0,
+                };
+            }
         }
-        // Entry block
-        let entry_block = blocks[0];
-        builder.append_block_params_for_function_params(entry_block);
-        builder.switch_to_block(entry_block);
-        //println!("Switched to entry block={:?}", entry_block);
 
-        // Function parameters
-        let tape_ptr = builder.block_params(entry_block)[0];
-        let rt_ptr   = builder.block_params(entry_block)[1];
-        let write_ptr= builder.block_params(entry_block)[2];
-        let read_ptr = builder.block_params(entry_block)[3];
-
-        // Prepare signatures for indirect calls: both take runtime ptr first
-        let write_sig_ref = builder.import_signature({
-            let mut sig = self.module.make_signature();
-            sig.params.push(AbiParam::new(ptr_ty));    // runtime ptr
-            sig.params.push(AbiParam::new(types::I8)); // byte to write
-            sig
-        });
-        let read_sig_ref = builder.import_signature({
-            let mut sig = self.module.make_signature();
-            sig.params.push(AbiParam::new(ptr_ty));    // runtime ptr
-            sig.returns.push(AbiParam::new(types::I8)); // byte read
-            sig
-        });
-
-        // Variable for current cell pointer
-        let cell_ptr = Variable::new(0);
-        builder.declare_var(cell_ptr, ptr_ty);
-        builder.def_var(cell_ptr, tape_ptr);
-
-        // Translate each Brainfuck operation
+        // Second pass: emit each opcode sequence
         for (i, op) in self.code.iter().enumerate() {
-            let cur = blocks[i];
-            let nxt = blocks[i + 1];
-            builder.switch_to_block(cur);
-            //println!("Switching to block {} ({:?}) for op {:?}", i, cur, op);
-
-            let cell_addr = builder.use_var(cell_ptr);
             match op {
+                vm::Op::Nop => {}
                 vm::Op::Inc(n) => {
-                    let v = builder.ins().load(types::I8, MemFlags::new(), cell_addr, 0);
-                    let inc = builder.ins().iconst(types::I8, *n as i64);
-                    let res = builder.ins().iadd(v, inc);
-                    builder.ins().store(MemFlags::new(), res, cell_addr, 0);
-                    builder.ins().jump(nxt, &[]);
+                    // ldrb w4, [x19]
+                    code.extend(&0x39401664u32.to_le_bytes());
+                    // add w4, w4, #n
+                    let instr = 0x11000000u32 | ((*n as u32) << 10) | (4 << 5) | 4;
+                    code.extend(&instr.to_le_bytes());
+                    // strb w4, [x19]
+                    code.extend(&0x39001664u32.to_le_bytes());
                 }
                 vm::Op::Dec(n) => {
-                    let v = builder.ins().load(types::I8, MemFlags::new(), cell_addr, 0);
-                    let dec = builder.ins().iconst(types::I8, *n as i64);
-                    let res = builder.ins().isub(v, dec);
-                    builder.ins().store(MemFlags::new(), res, cell_addr, 0);
-                    builder.ins().jump(nxt, &[]);
+                    code.extend(&0x39401664u32.to_le_bytes());
+                    let instr = 0x51000000u32 | ((*n as u32) << 10) | (4 << 5) | 4;
+                    code.extend(&instr.to_le_bytes());
+                    code.extend(&0x39001664u32.to_le_bytes());
                 }
                 vm::Op::MovR(n) => {
-                    let ptr = builder.use_var(cell_ptr);
-                    let ofs = builder.ins().iconst(ptr_ty, *n as i64);
-                    let newp = builder.ins().iadd(ptr, ofs);
-                    builder.def_var(cell_ptr, newp);
-                    builder.ins().jump(nxt, &[]);
+                    // add x19, x19, #n
+                    let instr = 0x91000000u32 | ((*n as u32) << 10) | (19 << 5) | 19;
+                    code.extend(&instr.to_le_bytes());
                 }
                 vm::Op::MovL(n) => {
-                    let ptr = builder.use_var(cell_ptr);
-                    let ofs = builder.ins().iconst(ptr_ty, *n as i64);
-                    let newp = builder.ins().isub(ptr, ofs);
-                    builder.def_var(cell_ptr, newp);
-                    builder.ins().jump(nxt, &[]);
-                }
-                vm::Op::JmpIfZ(target) => {
-                    let v = builder.ins().load(types::I8, MemFlags::new(), cell_addr, 0);
-                    let zv = builder.ins().iconst(types::I8, 0);
-                    let cmp = builder.ins().icmp(IntCC::Equal, v, zv);
-                    builder.ins().brif(cmp, blocks[*target as usize], &[], nxt, &[]);
-                }
-                vm::Op::JmpIfNZ(target) => {
-                    let v = builder.ins().load(types::I8, MemFlags::new(), cell_addr, 0);
-                    let zv = builder.ins().iconst(types::I8, 0);
-                    let cmp = builder.ins().icmp(IntCC::NotEqual, v, zv);
-                    builder.ins().brif(cmp, blocks[*target as usize], &[], nxt, &[]);
+                    let instr = 0xD1000000u32 | ((*n as u32) << 10) | (19 << 5) | 19;
+                    code.extend(&instr.to_le_bytes());
                 }
                 vm::Op::Print => {
-                    let v = builder.ins().load(types::I8, MemFlags::new(), cell_addr, 0);
-                    builder.ins().call_indirect(write_sig_ref, write_ptr, &[rt_ptr, v]);
-                    builder.ins().jump(nxt, &[]);
+                    // ldrb w4, [x19]
+                    code.extend(&0x39401664u32.to_le_bytes());
+                    // mov x0, x20 via ADD #0
+                    code.extend(&0x91000280u32.to_le_bytes());
+                    // mov w1, w4 via ADD #0 (32-bit)
+                    code.extend(&0x11000081u32.to_le_bytes());
+                    // blr x21 (branch with link to reg X21)
+                    code.extend(&[0xA0, 0x02, 0x3F, 0xD6]);
                 }
                 vm::Op::Read => {
-                    let call = builder.ins().call_indirect(read_sig_ref, read_ptr, &[rt_ptr]);
-                    let rv = builder.inst_results(call)[0];
-                    builder.ins().store(MemFlags::new(), rv, cell_addr, 0);
-                    builder.ins().jump(nxt, &[]);
+                    // mov x0, x20 via ADD #0
+                    code.extend(&0x91000280u32.to_le_bytes());
+                    // blr x22 (branch with link to reg X22)
+                    code.extend(&[0xC0, 0x02, 0x3F, 0xD6]);
+                    // strb w0, [x19]
+                    code.extend(&0x390006C4u32.to_le_bytes());
                 }
-                vm::Op::Nop => {
-                    builder.ins().jump(nxt, &[]);
+                vm::Op::JmpIfZ(target) => {
+                    code.extend(&0x39401664u32.to_le_bytes());
+                    // cbz w4, <label>
+                    let to = label_offsets[*target as usize] as i64 - (code.len() as i64 + 4);
+                    let imm19 = ((to / 4) as i32) & 0x7FFFF;
+                    let instr = 0x34000000u32 | ((imm19 as u32) << 5) | 4;
+                    code.extend(&instr.to_le_bytes());
+                }
+                vm::Op::JmpIfNZ(target) => {
+                    code.extend(&0x39401664u32.to_le_bytes());
+                    let to = label_offsets[*target as usize] as i64 - (code.len() as i64 + 4);
+                    let imm19 = ((to / 4) as i32) & 0x7FFFF;
+                    let instr = 0x35000000u32 | ((imm19 as u32) << 5) | 4;
+                    code.extend(&instr.to_le_bytes());
                 }
             }
         }
 
-        // Exit block
-        let exit_b = blocks[self.code.len()];
-        //println!("Switching to exit block {} ({:?})", self.code.len(), exit_b);
-        builder.switch_to_block(exit_b);
-        //println!("Translating exit block {} ({:?})", self.code.len(), exit_b);
-        let final_addr = builder.use_var(cell_ptr);
-        let final_v = builder.ins().load(types::I8, MemFlags::new(), final_addr, 0);
-        builder.ins().return_(&[final_v]);
-        // Seal all blocks now that all edges are created
-        builder.seal_all_blocks();
-        builder.finalize();
+        // EPILOGUE
+        // mov w0, #0
+        code.extend(&0x52800000u32.to_le_bytes());
+        // ldp x29, x30, [sp], #16
+        code.extend(&[0xFD, 0x7B, 0xC1, 0xA8]);
+        // ret
+        code.extend(&[0xC0, 0x03, 0x5F, 0xD6]);
 
-        Ok(())
+        /*// DEBUG: map each high-level Op to its code offset
+        #[cfg(debug_assertions)]
+        {
+            println!("JIT instruction map:");
+            for (i, op) in self.code.iter().enumerate() {
+                let off = label_offsets[i];
+                println!("  0x{:04x}: {:?}", off, op);
+            }
+        }*/
+        return Ok(code);
     }
+
 }
 

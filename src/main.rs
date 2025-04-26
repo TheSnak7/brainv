@@ -43,9 +43,8 @@ fn main() {
     let mut jit = JIT::new(code);
     let compiled_code = jit.compile();
 
-    if let Ok(code_ptr) = compiled_code {
-        let code_ptr = code_ptr as *const u8;
-        let mut runtime = Runtime::new(io, code_ptr);
+    if let Ok(code_vec) = compiled_code {
+        let mut runtime = Runtime::new(io, code_vec);
         runtime.run();
         //let tape = runtime.tape();
         //println!("Tape: {:?}", tape);
