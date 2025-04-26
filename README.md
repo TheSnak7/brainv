@@ -1,8 +1,15 @@
-# Brainv
+<p align="center">
+  <a href="https://github.com/TheSnak7/brainv"><img src="logo.png" alt="Brainv Logo" height=170></a>
+</p>
+<h1 align="center">Brainv</h1>
+
+<p align="center">
+  <a href="https://github.com/TheSnak7/brainv"><img src="https://img.shields.io/github/stars/TheSnak7/brainv" alt="stars"></a>
+</p>
 
 ## About
 
-Brainv is a brainf*ck interpreter for me to explore some libraries and maybe some optimization strategies.
+Brainv is a brainf*ck interpreter for me to explore some libraries and maybe some optimization strategies. The different stages are available as different branches.
 
 ## Benchmarks
 
