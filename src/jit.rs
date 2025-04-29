@@ -38,6 +38,9 @@ impl JIT {
         // PROLOGUE: push frame pointer & link register
         code.extend(&[0xFD, 0x7B, 0xBF, 0xA9]); // stp x29, x30, [sp, #-16]!
         code.extend(&[0xFD, 0x03, 0x00, 0x91]); // mov x29, sp
+        // Preserve callee-saved registers before using them
+        code.extend(&[0xF3, 0x53, 0xBF, 0xA9]); // stp x19, x20, [sp, #-16]!
+        code.extend(&[0xF5, 0x5B, 0xBF, 0xA9]); // stp x21, x22, [sp, #-16]!
         // Save arguments into callee-saved regs via ADD #0 (mov xN, xM)
         code.extend(&[0x13, 0x00, 0x00, 0x91]); // add x19, x0, #0
         code.extend(&[0x34, 0x00, 0x00, 0x91]); // add x20, x1, #0
@@ -127,6 +130,9 @@ impl JIT {
         // EPILOGUE
         // mov w0, #0
         code.extend(&0x52800000u32.to_le_bytes());
+        // Restore callee-saved registers
+        code.extend(&[0xF5, 0x5B, 0xC1, 0xA8]); // ldp x21, x22, [sp], #16
+        code.extend(&[0xF3, 0x53, 0xC1, 0xA8]); // ldp x19, x20, [sp], #16
         // ldp x29, x30, [sp], #16
         code.extend(&[0xFD, 0x7B, 0xC1, 0xA8]);
         // ret
