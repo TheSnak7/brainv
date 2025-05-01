@@ -69,18 +69,18 @@ impl JIT {
                 vm::Op::Nop => {}
                 vm::Op::Inc(n) => {
                     // ldrb w4, [x19]
-                    code.extend(&0x39401664u32.to_le_bytes());
+                    code.extend(&0x39400264u32.to_le_bytes());
                     // add w4, w4, #n
                     let instr = 0x11000000u32 | ((*n as u32) << 10) | (4 << 5) | 4;
                     code.extend(&instr.to_le_bytes());
                     // strb w4, [x19]
-                    code.extend(&0x39001664u32.to_le_bytes());
+                    code.extend(&0x39000264u32.to_le_bytes());
                 }
                 vm::Op::Dec(n) => {
-                    code.extend(&0x39401664u32.to_le_bytes());
+                    code.extend(&0x39400264u32.to_le_bytes());
                     let instr = 0x51000000u32 | ((*n as u32) << 10) | (4 << 5) | 4;
                     code.extend(&instr.to_le_bytes());
-                    code.extend(&0x39001664u32.to_le_bytes());
+                    code.extend(&0x39000264u32.to_le_bytes());
                 }
                 vm::Op::MovR(n) => {
                     // add x19, x19, #n
@@ -93,7 +93,7 @@ impl JIT {
                 }
                 vm::Op::Print => {
                     // ldrb w4, [x19]
-                    code.extend(&0x39401664u32.to_le_bytes());
+                    code.extend(&0x39400264u32.to_le_bytes());
                     // mov x0, x20 via ADD #0
                     code.extend(&0x91000280u32.to_le_bytes());
                     // mov w1, w4 via ADD #0 (32-bit)
@@ -107,10 +107,10 @@ impl JIT {
                     // blr x22 (branch with link to reg X22)
                     code.extend(&[0xC0, 0x02, 0x3F, 0xD6]);
                     // strb w0, [x19]
-                    code.extend(&0x390006C4u32.to_le_bytes());
+                    code.extend(&0x39000260u32.to_le_bytes());
                 }
                 vm::Op::JmpIfZ(target) => {
-                    code.extend(&0x39401664u32.to_le_bytes());
+                    code.extend(&0x39400264u32.to_le_bytes());
                     // cbz w4, <label>
                     let to = label_offsets[*target as usize] as i64 - (code.len() as i64 + 4);
                     let imm19 = ((to / 4) as i32) & 0x7FFFF;
@@ -118,7 +118,7 @@ impl JIT {
                     code.extend(&instr.to_le_bytes());
                 }
                 vm::Op::JmpIfNZ(target) => {
-                    code.extend(&0x39401664u32.to_le_bytes());
+                    code.extend(&0x39400264u32.to_le_bytes());
                     let to = label_offsets[*target as usize] as i64 - (code.len() as i64 + 4);
                     let imm19 = ((to / 4) as i32) & 0x7FFFF;
                     let instr = 0x35000000u32 | ((imm19 as u32) << 5) | 4;
