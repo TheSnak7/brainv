@@ -23,7 +23,7 @@ impl<'a> Compiler<'a> {
             match char {
                 '+' => {
                     if let Op::Inc(num) = last_instruction {
-                        last_instruction = Op::Inc(num + 1);
+                        last_instruction = Op::Inc(num.wrapping_add(1));
                     } else {
                         code.push(last_instruction);
 
@@ -32,7 +32,7 @@ impl<'a> Compiler<'a> {
                 },
                 '-' => {
                     if let Op::Dec(num) = last_instruction {
-                        last_instruction = Op::Dec(num + 1);
+                        last_instruction = Op::Dec(num.wrapping_add(1));
                     } else {
                         code.push(last_instruction);
 
@@ -41,7 +41,12 @@ impl<'a> Compiler<'a> {
                 },
                 '>' => {
                     if let Op::MovR(num) = last_instruction {
-                        last_instruction = Op::MovR(num + 1);
+                        if num == u8::MAX {
+                            code.push(last_instruction);
+                            last_instruction = Op::MovR(1);
+                        } else {
+                            last_instruction = Op::MovR(num + 1);
+                        }
                     } else {
                         code.push(last_instruction);
 
@@ -50,7 +55,12 @@ impl<'a> Compiler<'a> {
                 },
                 '<' => {
                     if let Op::MovL(num) = last_instruction {
-                        last_instruction = Op::MovL(num + 1);
+                        if num == u8::MAX {
+                            code.push(last_instruction);
+                            last_instruction = Op::MovL(1);
+                        } else {
+                            last_instruction = Op::MovL(num + 1);
+                        }
                     } else {
                         code.push(last_instruction);
 
@@ -66,8 +76,10 @@ impl<'a> Compiler<'a> {
                     code.push(last_instruction);
                     // backpatch the left bracket
                     let left_bracket_index = left_bracket_stack.pop().expect("Unmatched ']'");
-                    last_instruction = Op::JmpIfNZ(left_bracket_index as u16);
-                    code[left_bracket_index] = Op::JmpIfZ(code.len() as u16);
+                    let left_target = u16::try_from(left_bracket_index).expect("Program too large for jump indices");
+                    let right_target = u16::try_from(code.len()).expect("Program too large for jump indices");
+                    last_instruction = Op::JmpIfNZ(left_target);
+                    code[left_bracket_index] = Op::JmpIfZ(right_target);
                 },
                 '.' => {
                     code.push(last_instruction);
@@ -82,6 +94,7 @@ impl<'a> Compiler<'a> {
 
             
         }
+        assert!(left_bracket_stack.is_empty(), "Unmatched '['");
         code.push(last_instruction);
 
         code

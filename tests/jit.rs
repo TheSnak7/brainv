@@ -132,6 +132,21 @@ mod tests {
     }
 
     #[test]
+    fn runs_long_instruction_sequences() {
+        for count in [255, 256, 257, 4096] {
+            let mut tape = vec![0u8; count + 1];
+            let program = format!("{}{}{}{}.",
+                "+".repeat(257), ">".repeat(count), "-".repeat(257), "<".repeat(count),
+            );
+            let byte = run_code(Compiler::new(&program).compile(), &mut tape, 0);
+
+            assert_eq!(tape[0], 1);
+            assert_eq!(tape[count], 255);
+            assert_eq!(byte, 1);
+        }
+    }
+
+    #[test]
     fn preserves_registers_across_callback() {
         let code = JIT::new(vec![Op::MovR(1), Op::Print]).compile().unwrap();
         let mut tape = [42u8; 32];
