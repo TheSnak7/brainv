@@ -2,7 +2,7 @@
 mod tests {
     use std::{arch::asm, mem, ptr};
 
-    use brainv::{jit::JIT, vm::Op};
+    use brainv::{compiler::Compiler, jit::JIT, vm::Op};
     use winapi::um::memoryapi::{VirtualAlloc, VirtualFree};
     use winapi::um::winnt::{MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_EXECUTE_READWRITE};
     use winapi::um::processthreadsapi::{FlushInstructionCache, GetCurrentProcess};
@@ -69,6 +69,66 @@ mod tests {
 
         assert_eq!(tape, [10, 20, 201, 40, 50, 60, 70, 80]);
         assert_eq!(byte, 201);
+    }
+
+    #[test]
+    fn skips_loop_body_when_cell_is_zero() {
+        let mut tape = [0u8; 8];
+        let byte = run_code(Compiler::new("[>]+.").compile(), &mut tape, 0);
+
+        assert_eq!(tape, [1, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(byte, 1);
+    }
+
+    #[test]
+    fn loops_after_input() {
+        let mut tape = [0u8; 8];
+        let byte = run_code(Compiler::new(",[->+<]>.").compile(), &mut tape, 7);
+
+        assert_eq!(tape, [0, 7, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(byte, 7);
+    }
+
+    #[test]
+    fn runs_nested_loops() {
+        let mut tape = [0u8; 8];
+        let byte = run_code(Compiler::new("++[>++[>+<-]<-]>>.").compile(), &mut tape, 0);
+
+        assert_eq!(tape, [0, 0, 4, 0, 0, 0, 0, 0]);
+        assert_eq!(byte, 4);
+    }
+
+    #[test]
+    fn skips_empty_loop() {
+        let mut tape = [0u8; 8];
+        let byte = run_code(Compiler::new("[]+.").compile(), &mut tape, 0);
+
+        assert_eq!(tape[0], 1);
+        assert_eq!(byte, 1);
+    }
+
+    #[test]
+    fn loop_can_exit_at_end_of_program() {
+        let mut tape = [0u8; 8];
+        run_code(Compiler::new("+[-]").compile(), &mut tape, 0);
+
+        assert_eq!(tape[0], 0);
+        run_code(Compiler::new("[>]").compile(), &mut tape, 0);
+        assert_eq!(tape, [0u8; 8]);
+    }
+
+    #[test]
+    fn rejects_invalid_jump_target() {
+        assert!(JIT::new(vec![Op::JmpIfZ(1)]).compile().is_err());
+        assert!(JIT::new(vec![Op::JmpIfNZ(1)]).compile().is_err());
+    }
+
+    #[test]
+    fn rejects_out_of_range_jump() {
+        let mut code = vec![Op::Print; 65537];
+        code.push(Op::JmpIfNZ(0));
+
+        assert!(JIT::new(code).compile().is_err());
     }
 
     #[test]

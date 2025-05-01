@@ -48,7 +48,7 @@ impl JIT {
         code.extend(&[0x76, 0x00, 0x00, 0x91]); // add x22, x3, #0
 
         // First pass: compute byte offsets for each instruction label
-        let mut label_offsets = vec![0usize; self.code.len()];
+        let mut label_offsets = vec![0usize; self.code.len() + 1];
         {
             let mut offset = code.len();
             for (i, op) in self.code.iter().enumerate() {
@@ -56,15 +56,17 @@ impl JIT {
                 offset += match op {
                     vm::Op::Inc(_) | vm::Op::Dec(_) => 12,
                     vm::Op::MovR(_) | vm::Op::MovL(_) => 4,
-                    vm::Op::Print | vm::Op::Read => 16,
+                    vm::Op::Print => 16,
+                    vm::Op::Read => 12,
                     vm::Op::JmpIfZ(_) | vm::Op::JmpIfNZ(_) => 8,
                     vm::Op::Nop => 0,
                 };
             }
+            label_offsets[self.code.len()] = offset;
         }
 
         // Second pass: emit each opcode sequence
-        for (i, op) in self.code.iter().enumerate() {
+        for op in self.code.iter() {
             match op {
                 vm::Op::Nop => {}
                 vm::Op::Inc(n) => {
@@ -112,14 +114,23 @@ impl JIT {
                 vm::Op::JmpIfZ(target) => {
                     code.extend(&0x39400264u32.to_le_bytes());
                     // cbz w4, <label>
-                    let to = label_offsets[*target as usize] as i64 - (code.len() as i64 + 4);
+                    // The VM continues after the matching bracket
+                    let label = label_offsets.get(*target as usize + 1).ok_or("Invalid jump target")?;
+                    let to = *label as i64 - code.len() as i64;
+                    if !(-0x100000..0x100000).contains(&to) {
+                        return Err(format!("Jump offset out of range: {}", to));
+                    }
                     let imm19 = ((to / 4) as i32) & 0x7FFFF;
                     let instr = 0x34000000u32 | ((imm19 as u32) << 5) | 4;
                     code.extend(&instr.to_le_bytes());
                 }
                 vm::Op::JmpIfNZ(target) => {
                     code.extend(&0x39400264u32.to_le_bytes());
-                    let to = label_offsets[*target as usize] as i64 - (code.len() as i64 + 4);
+                    let label = label_offsets.get(*target as usize + 1).ok_or("Invalid jump target")?;
+                    let to = *label as i64 - code.len() as i64;
+                    if !(-0x100000..0x100000).contains(&to) {
+                        return Err(format!("Jump offset out of range: {}", to));
+                    }
                     let imm19 = ((to / 4) as i32) & 0x7FFFF;
                     let instr = 0x35000000u32 | ((imm19 as u32) << 5) | 4;
                     code.extend(&instr.to_le_bytes());
