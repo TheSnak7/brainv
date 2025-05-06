@@ -21,8 +21,9 @@ impl JIT {
     // fn(tape_ptr: *mut u8,
     //    rt_ptr: *mut u8,
     //    write_char: extern "C" fn(rt_ptr: *mut u8, u8),
-    //    read_char: extern "C" fn(rt_ptr: *mut u8) -> u8)
-    //    -> u8
+    //    read_char: extern "C" fn(rt_ptr: *mut u8) -> u8,
+    //    tape_len: usize)
+    //    -> u8 (0 on success, 1 on tape bounds error)
     // For now the tape is not growable, so we can just pass a pointer to the tape
 
     // ARM64 only, no support for x86
@@ -31,21 +32,31 @@ impl JIT {
         assert_eq!(std::env::consts::ARCH, "aarch64");
 
         // Calling convention:
-        //   x0: tape_ptr, x1: rt_ptr, x2: write_fn, x3: read_fn
+        //   x0: tape_ptr, x1: rt_ptr, x2: write_fn, x3: read_fn, x4: tape_len
         // We'll save them in callee-saved registers:
         //   x19 = tape_ptr, x20 = rt_ptr, x21 = write_fn, x22 = read_fn
+        //   x23 = tape index, x24 = tape length
         let mut code: Vec<u8> = Vec::new();
+        let mut bounds_jumps = vec![];
         // PROLOGUE: push frame pointer & link register
         code.extend(&[0xFD, 0x7B, 0xBF, 0xA9]); // stp x29, x30, [sp, #-16]!
         code.extend(&[0xFD, 0x03, 0x00, 0x91]); // mov x29, sp
         // Preserve callee-saved registers before using them
         code.extend(&[0xF3, 0x53, 0xBF, 0xA9]); // stp x19, x20, [sp, #-16]!
         code.extend(&[0xF5, 0x5B, 0xBF, 0xA9]); // stp x21, x22, [sp, #-16]!
+        code.extend(&[0xF7, 0x63, 0xBF, 0xA9]); // stp x23, x24, [sp, #-16]!
         // Save arguments into callee-saved regs via ADD #0 (mov xN, xM)
         code.extend(&[0x13, 0x00, 0x00, 0x91]); // add x19, x0, #0
         code.extend(&[0x34, 0x00, 0x00, 0x91]); // add x20, x1, #0
         code.extend(&[0x55, 0x00, 0x00, 0x91]); // add x21, x2, #0
         code.extend(&[0x76, 0x00, 0x00, 0x91]); // add x22, x3, #0
+        code.extend(&0xD2800017u32.to_le_bytes()); // mov x23, #0
+        code.extend(&0x91000098u32.to_le_bytes()); // add x24, x4, #0
+        // Reject an empty tape before accessing the first cell
+        code.extend(&0xEB1802FFu32.to_le_bytes()); // cmp x23, x24
+        code.extend(&0x54000043u32.to_le_bytes()); // b.lo +8
+        bounds_jumps.push(code.len());
+        code.extend(&0x14000000u32.to_le_bytes()); // b bounds_error (patched below)
 
         // First pass: compute byte offsets for each instruction label
         let mut label_offsets = vec![0usize; self.code.len() + 1];
@@ -55,7 +66,7 @@ impl JIT {
                 label_offsets[i] = offset;
                 offset += match op {
                     vm::Op::Inc(_) | vm::Op::Dec(_) => 12,
-                    vm::Op::MovR(_) | vm::Op::MovL(_) => 4,
+                    vm::Op::MovR(_) | vm::Op::MovL(_) => 24,
                     vm::Op::Print => 16,
                     vm::Op::Read => 12,
                     vm::Op::JmpIfZ(_) | vm::Op::JmpIfNZ(_) => 8,
@@ -85,11 +96,27 @@ impl JIT {
                     code.extend(&0x39000264u32.to_le_bytes());
                 }
                 vm::Op::MovR(n) => {
+                    // Check the new index before moving the tape pointer
+                    let instr = 0x91000000u32 | ((*n as u32) << 10) | (23 << 5) | 4;
+                    code.extend(&instr.to_le_bytes()); // add x4, x23, #n
+                    code.extend(&0xEB18009Fu32.to_le_bytes()); // cmp x4, x24
+                    code.extend(&0x54000043u32.to_le_bytes()); // b.lo +8
+                    bounds_jumps.push(code.len());
+                    code.extend(&0x14000000u32.to_le_bytes()); // b bounds_error
+                    code.extend(&0x91000097u32.to_le_bytes()); // add x23, x4, #0
                     // add x19, x19, #n
                     let instr = 0x91000000u32 | ((*n as u32) << 10) | (19 << 5) | 19;
                     code.extend(&instr.to_le_bytes());
                 }
                 vm::Op::MovL(n) => {
+                    // An index below zero wraps above the tape length
+                    let instr = 0xD1000000u32 | ((*n as u32) << 10) | (23 << 5) | 4;
+                    code.extend(&instr.to_le_bytes()); // sub x4, x23, #n
+                    code.extend(&0xEB18009Fu32.to_le_bytes()); // cmp x4, x24
+                    code.extend(&0x54000043u32.to_le_bytes()); // b.lo +8
+                    bounds_jumps.push(code.len());
+                    code.extend(&0x14000000u32.to_le_bytes()); // b bounds_error
+                    code.extend(&0x91000097u32.to_le_bytes()); // add x23, x4, #0
                     let instr = 0xD1000000u32 | ((*n as u32) << 10) | (19 << 5) | 19;
                     code.extend(&instr.to_le_bytes());
                 }
@@ -141,13 +168,26 @@ impl JIT {
         // EPILOGUE
         // mov w0, #0
         code.extend(&0x52800000u32.to_le_bytes());
+        code.extend(&0x14000002u32.to_le_bytes()); // b +8 (skip bounds error)
+        let bounds_error = code.len();
+        code.extend(&0x52800020u32.to_le_bytes()); // mov w0, #1
         // Restore callee-saved registers
+        code.extend(&[0xF7, 0x63, 0xC1, 0xA8]); // ldp x23, x24, [sp], #16
         code.extend(&[0xF5, 0x5B, 0xC1, 0xA8]); // ldp x21, x22, [sp], #16
         code.extend(&[0xF3, 0x53, 0xC1, 0xA8]); // ldp x19, x20, [sp], #16
         // ldp x29, x30, [sp], #16
         code.extend(&[0xFD, 0x7B, 0xC1, 0xA8]);
         // ret
         code.extend(&[0xC0, 0x03, 0x5F, 0xD6]);
+
+        for jump in bounds_jumps {
+            let to = bounds_error as i64 - jump as i64;
+            if !(-0x8000000..0x8000000).contains(&to) {
+                return Err(format!("Bounds error jump offset out of range: {}", to));
+            }
+            let instr = 0x14000000u32 | (((to / 4) as u32) & 0x3FFFFFF);
+            code[jump..jump + 4].copy_from_slice(&instr.to_le_bytes());
+        }
 
         /*// DEBUG: map each high-level Op to its code offset
         #[cfg(debug_assertions)]

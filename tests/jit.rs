@@ -28,8 +28,13 @@ mod tests {
     }
 
     fn run_code(program: Vec<Op>, tape: &mut [u8], input: u8) -> u8 {
+        try_run_code(program, tape, input).unwrap()
+    }
+
+    fn try_run_code(program: Vec<Op>, tape: &mut [u8], input: u8) -> Result<u8, u8> {
         let code = JIT::new(program).compile().unwrap();
         let mut output = Output { byte: 0, stack_aligned: false, input };
+        let status;
 
         unsafe {
             let code_ptr = VirtualAlloc(
@@ -41,14 +46,18 @@ mod tests {
 
             let bf_fn = mem::transmute::<
                 *mut u8,
-                extern "C" fn(*mut u8, *mut u8, extern "C" fn(*mut u8, u8), extern "C" fn(*mut u8) -> u8) -> u8,
+                extern "C" fn(*mut u8, *mut u8, extern "C" fn(*mut u8, u8), extern "C" fn(*mut u8) -> u8, usize) -> u8,
             >(code_ptr as *mut u8);
-            bf_fn(tape.as_mut_ptr(), &mut output as *mut Output as *mut u8, write_byte, read_byte);
+            status = bf_fn(tape.as_mut_ptr(), &mut output as *mut Output as *mut u8, write_byte, read_byte, tape.len());
 
             assert_ne!(VirtualFree(code_ptr, 0, MEM_RELEASE), 0);
         }
 
-        output.byte
+        if status == 0 {
+            Ok(output.byte)
+        } else {
+            Err(status)
+        }
     }
 
     #[test]
@@ -146,9 +155,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn preserves_registers_across_callback() {
-        let code = JIT::new(vec![Op::MovR(1), Op::Print]).compile().unwrap();
+    fn check_registers(program: Vec<Op>, expected: u8, stack_aligned: bool) {
+        let code = JIT::new(program).compile().unwrap();
         let mut tape = [42u8; 32];
         let mut output = Output { byte: 0, stack_aligned: false, input: 0 };
         let changed: usize;
@@ -163,12 +171,15 @@ mod tests {
 
             // Save the caller's registers, then check that the JIT preserves known values.
             asm!(
-                "stp x19, x20, [sp, #-32]!",
+                "stp x19, x20, [sp, #-48]!",
                 "stp x21, x22, [sp, #16]",
+                "stp x23, x24, [sp, #32]",
                 "mov x19, #19",
                 "mov x20, #20",
                 "mov x21, #21",
                 "mov x22, #22",
+                "mov x23, #23",
+                "mov x24, #24",
                 "blr x9",
                 "cmp x19, #19",
                 "cset w0, ne",
@@ -181,13 +192,21 @@ mod tests {
                 "cmp x22, #22",
                 "cset w10, ne",
                 "orr w0, w0, w10, lsl #3",
+                "cmp x23, #23",
+                "cset w10, ne",
+                "orr w0, w0, w10, lsl #4",
+                "cmp x24, #24",
+                "cset w10, ne",
+                "orr w0, w0, w10, lsl #5",
+                "ldp x23, x24, [sp, #32]",
                 "ldp x21, x22, [sp, #16]",
-                "ldp x19, x20, [sp], #32",
+                "ldp x19, x20, [sp], #48",
                 in("x9") code_ptr,
                 inlateout("x0") tape.as_mut_ptr() => changed,
                 in("x1") &mut output as *mut Output,
                 in("x2") write_byte as extern "C" fn(*mut u8, u8),
                 in("x3") read_byte as extern "C" fn(*mut u8) -> u8,
+                in("x4") tape.len(),
                 clobber_abi("C"),
             );
 
@@ -195,7 +214,69 @@ mod tests {
         }
 
         assert_eq!(changed, 0, "JIT changed callee-saved registers");
-        assert_eq!(output.byte, 42);
-        assert!(output.stack_aligned, "Callback stack must be 16-byte aligned");
+        assert_eq!(output.byte, expected);
+        assert_eq!(output.stack_aligned, stack_aligned);
+    }
+
+    #[test]
+    fn preserves_registers_across_callback() {
+        check_registers(vec![Op::MovR(1), Op::Print], 42, true);
+    }
+
+    #[test]
+    fn preserves_registers_after_bounds_error() {
+        check_registers(vec![Op::MovL(1), Op::Print], 0, false);
+        check_registers(vec![Op::MovR(32), Op::Print], 0, false);
+    }
+
+    #[test]
+    fn rejects_moves_outside_tape() {
+        for moves in [
+            vec![Op::MovL(1)],
+            vec![Op::MovR(2)],
+            vec![Op::MovR(255)],
+            vec![Op::MovR(1), Op::MovR(1)],
+            vec![Op::MovR(1), Op::MovL(2)],
+        ] {
+            let mut tape = [17, 20, 30, 41];
+            let mut program = moves;
+            program.extend([Op::Inc(1), Op::Read, Op::Print]);
+
+            assert_eq!(try_run_code(program, &mut tape[1..3], 201), Err(1));
+            assert_eq!(tape, [17, 20, 30, 41]);
+        }
+    }
+
+    #[test]
+    fn allows_first_and_last_cell() {
+        let mut tape = [0u8; 2];
+        let byte = run_code(vec![
+            Op::MovL(0), Op::Inc(1), Op::MovR(1), Op::Read, Op::MovR(0), Op::Print,
+            Op::MovL(1), Op::Inc(1),
+        ], &mut tape, 201);
+
+        assert_eq!(byte, 201);
+        assert_eq!(tape, [2, 201]);
+    }
+
+    #[test]
+    fn rejects_empty_tape() {
+        assert_eq!(try_run_code(vec![Op::Print], &mut [], 0), Err(1));
+    }
+
+    #[test]
+    fn skips_out_of_bounds_moves_in_zero_loop() {
+        let mut tape = [0u8; 1];
+        let byte = run_code(Compiler::new("[<]+.").compile(), &mut tape, 0);
+
+        assert_eq!(byte, 1);
+        assert_eq!(tape, [1]);
+    }
+
+    #[test]
+    fn checks_moves_inside_loop() {
+        let mut tape = [0u8; 4];
+        assert_eq!(try_run_code(Compiler::new("+[>+]").compile(), &mut tape, 0), Err(1));
+        assert_eq!(tape, [1u8; 4]);
     }
 }

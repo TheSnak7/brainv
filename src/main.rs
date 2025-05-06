@@ -45,7 +45,10 @@ fn main() {
 
     if let Ok(code_vec) = compiled_code {
         let mut runtime = Runtime::new(io, code_vec);
-        runtime.run();
+        if let Err(msg) = runtime.run() {
+            eprintln!("{}", msg);
+            std::process::exit(1);
+        }
         //let tape = runtime.tape();
         //println!("Tape: {:?}", tape);
     }

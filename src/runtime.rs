@@ -41,7 +41,7 @@ impl<'a> Runtime<'a> {
     }
 
     /// Run the JIT-compiled function
-    pub fn run(&mut self) {
+    pub fn run(&mut self) -> Result<(), String> {
         // DEBUG: dump generated JIT code as 32-bit words
         /*println!("Generated JIT code ({} bytes):", self.code.len());
         for (i, chunk) in self.code.chunks(4).enumerate() {
@@ -75,7 +75,7 @@ impl<'a> Runtime<'a> {
         }
 
         // Cast the code pointer to the BF JIT function signature:
-        // fn(*mut u8, *mut u8, extern "C" fn(*mut u8, u8), extern "C" fn(*mut u8) -> u8) -> u8
+        // fn(*mut u8, *mut u8, extern "C" fn(*mut u8, u8), extern "C" fn(*mut u8) -> u8, usize) -> u8
         let bf_fn = unsafe {
             mem::transmute::<
                 *mut u8,
@@ -84,6 +84,7 @@ impl<'a> Runtime<'a> {
                     *mut u8,
                     extern "C" fn(*mut u8, u8),
                     extern "C" fn(*mut u8) -> u8,
+                    usize,
                 ) -> u8,
             >(code_ptr as *mut u8)
         };
@@ -97,7 +98,11 @@ impl<'a> Runtime<'a> {
             read_trampoline as *const u8
         );*/
         // Call the BF function
-        bf_fn(tape_ptr, rt_ptr, write_trampoline, read_trampoline);
+        let status = bf_fn(tape_ptr, rt_ptr, write_trampoline, read_trampoline, self.tape.len());
+        if status != 0 {
+            return Err("Tape pointer out of bounds".into());
+        }
+        Ok(())
     }
 
     /// Consume the runtime and return the tape contents
