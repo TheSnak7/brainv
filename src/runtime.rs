@@ -106,6 +106,7 @@ impl<'a> Runtime<'a> {
         );*/
         // Call the BF function
         let status = bf_fn(tape_ptr, rt_ptr, write_trampoline, read_trampoline, self.tape.len());
+        self.io.flush();
         if status != 0 {
             return Err("Tape pointer out of bounds".into());
         }
