@@ -9,7 +9,10 @@
 
 ## About
 
-Brainv is a brainf*ck interpreter for me to explore some libraries and maybe some optimization strategies. The different stages are available as different branches.
+Brainv is a brainf*ck interpreter for me to explore some libraries and maybe some optimization strategies. This project is written in Rust (maybe not the most idiomatic :) ) and uses different branches for the different modes (I hope to find a better system).
+
+It has an Interpreter which can naively interpret the brainf*ck, or precompute jumps. Also test coverage, which I did not skimp on this project.
+The most interesting thing is the Arm64 JIT and emitted assembly, with memory management and ABI correctness tests.
 
 ## Benchmarks
 
