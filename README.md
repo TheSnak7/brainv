@@ -13,10 +13,18 @@ Brainv is a brainf*ck interpreter for me to explore some libraries and maybe som
 
 ## Benchmarks
 
-| Version           | Primes(350) | Pi-Digits(150) | Mandelbrot(100) |
-|-------------------|-------------|----------------|-----------------|
-| Simple            | 747.49 ms   | 304.30  ms     | -               |
-| Condensed         | 356.18 ms   | 126.99  ms     | -               |
-| Precomputed Jumps | 303.92 ms   |  97.933 ms     | 2.5503 s        |
-| Cranelift JIT     | 304.55 ms   |  98.117 ms     | 2.4558 s        |
-| Custom JIT        | 299.99 ms   |  97.556 ms     | 2.3874 s        |
+Measured on 2025-05-10.
+
+### Interpreter and custom JIT
+
+| Version     | Primes(350) | Pi-Digits(150) | Mandelbrot tiny | Sierpinski |
+|-------------|-------------|----------------|-----------------|------------|
+| Interpreter | 360.67 ms   | 119.81 ms      | 2.629 s         | 93.06 µs   |
+| Custom JIT  | 43.28 ms    | 12.63 ms       | 287.55 ms       | 16.72 µs   |
+
+### Custom JIT and Cranelift
+
+| Version       | Primes(350) | Pi-Digits(150) | Mandelbrot tiny | Sierpinski |
+|---------------|-------------|----------------|-----------------|------------|
+| Custom JIT    | 45.32 ms    | 13.11 ms       | 270.20 ms       | 19.93 µs   |
+| Cranelift JIT | 48.29 ms    | 18.28 ms       | 267.03 ms       | 1.313 ms   |
