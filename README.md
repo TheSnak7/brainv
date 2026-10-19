@@ -43,20 +43,14 @@ Use `--io` to select the IO mode:
 
 ## Benchmarks
 
-Measured on 2025-05-10.
-
 Times include compilation, runtime setup, execution and cleanup. Cranelift uses its default `opt_level = none`.
 
-### Interpreter and custom JIT
+### 2026-10-19
 
-| Version     | Primes(350) | Pi-Digits(150) | Mandelbrot tiny | Sierpinski |
-|-------------|-------------|----------------|-----------------|------------|
-| Interpreter | 360.67 ms   | 119.81 ms      | 2.629 s         | 93.06 µs   |
-| Custom JIT  | 43.28 ms    | 12.63 ms       | 287.55 ms       | 16.72 µs   |
-
-### Custom JIT and Cranelift
+Windows ARM64, Snapdragon X Elite X1E80100, Rust 1.86.0 in release mode. 10 samples per workload.
 
 | Version       | Primes(350) | Pi-Digits(150) | Mandelbrot tiny | Sierpinski |
 |---------------|-------------|----------------|-----------------|------------|
-| Custom JIT    | 45.32 ms    | 13.11 ms       | 270.20 ms       | 19.93 µs   |
-| Cranelift JIT | 48.29 ms    | 18.28 ms       | 267.03 ms       | 1.313 ms   |
+| Interpreter   | 695.68 ms   | 200.84 ms      | 3.391 s         | 149.97 µs  |
+| Custom JIT    | 65.00 ms    | 20.58 ms       | 493.73 ms       | 30.10 µs   |
+| Cranelift JIT | 63.56 ms    | 32.39 ms       | 520.02 ms       | 1.521 ms   |
