@@ -9,14 +9,43 @@
 
 ## About
 
-Brainv is a brainf*ck interpreter for me to explore some libraries and maybe some optimization strategies. This project is written in Rust (maybe not the most idiomatic :) ) and uses different branches for the different modes (I hope to find a better system).
+Brainv is a brainf*ck interpreter for me to explore some libraries and maybe some optimization strategies. This project is written in Rust (maybe not the most idiomatic :) ) and uses different branches for the different modes.
 
 It has an Interpreter which can naively interpret the brainf*ck, or precompute jumps. Also test coverage, which I did not skimp on this project.
 The most interesting thing is the Arm64 JIT and emitted assembly, with memory management and ABI correctness tests.
 
+## Requirements
+
+- Windows ARM64 for the custom JIT on `main`.
+- Rust 1.86.0 (tested).
+
+## Usage
+
+```powershell
+cargo run --release -- bf_tests/hello_world.bf
+```
+
+Use `--io` to select the IO mode:
+
+- `batched`: default, buffers output in 200-byte chunks.
+- `simple`: prints each byte immediately.
+- `one-print`: uses a larger output buffer for benchmarking.
+
+## Branches
+
+| Branch                   | Mode |
+|--------------------------|------|
+| `model/simple`           | Basic interpreter |
+| `model/condensed`        | Combines repeated arithmetic and move instructions |
+| `model/precompute-jumps` | Precomputes matching bracket jumps |
+| `model/cranelift-jit`    | Cranelift JIT |
+| `main`                   | Custom ARM64 JIT |
+
 ## Benchmarks
 
 Measured on 2025-05-10.
+
+Times include compilation, runtime setup, execution and cleanup. Cranelift uses its default `opt_level = none`.
 
 ### Interpreter and custom JIT
 
